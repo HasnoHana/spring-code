@@ -3,8 +3,12 @@ package hasno.code.spring.hh;
 import hasno.code.spring.annotation.Autowired;
 import hasno.code.spring.annotation.Component;
 
-@Component(name = "test")
-public class Dog {
+@Component(name = "test2")
+public class Cat {
     @Autowired
-    Cat cat;
+    Dog doc;
+
+    public Dog get() {
+        return doc;
+    }
 }

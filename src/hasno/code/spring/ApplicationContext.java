@@ -2,10 +2,11 @@ package hasno.code.spring;
 
 import hasno.code.spring.annotation.Component;
 import hasno.code.spring.definition.BeanDefinition;
+import hasno.code.spring.hh.Cat;
 
 import java.io.File;
-import java.io.IOException;
-import java.net.URISyntaxException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.net.URL;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -21,7 +22,16 @@ public class ApplicationContext {
 
     private final Map<String,BeanDefinition> beanDefinitionMap = new HashMap<>();
 
-    public void initContext(String packageName) throws Exception {
+    private final Map<String,Object> ioc = new HashMap<>();
+
+    //提前暴露的 ioc 容器
+    private final Map<String,Object> loadingIoc = new HashMap<>();
+
+    public ApplicationContext(String packageName) throws Exception {
+        initContext(packageName);
+    }
+
+    private void initContext(String packageName) throws Exception {
         // 1. 扫描包下面的所有 带有注释的类
         List<Class<?>> classList = scanClass(packageName);
         // 2. 检查是否带注释
@@ -32,10 +42,9 @@ public class ApplicationContext {
         }
         // 4. 执行createBean
         beanDefinitionMap.values().forEach(this::createBean);
-        for(Map.Entry<String, BeanDefinition> entry : beanDefinitionMap.entrySet()) {
-            System.out.println(entry.getKey()+ " " + entry.getValue());
-        }
 
+        Cat test2 = (Cat) getBean("test2");
+        System.out.println(test2.get());
     }
 
     private void wrapper(Class<?> type) {
@@ -83,18 +92,67 @@ public class ApplicationContext {
     }
 
     public Object createBean(BeanDefinition beanDefinition) {
-        return null;
+        String beanName = beanDefinition.getBeanName();
+        // 这里保证的不重复注册
+        if(ioc.containsKey(beanName)) {
+            return ioc.get(beanName);
+        }
+        if(loadingIoc.containsKey(beanName)) {
+            return loadingIoc.get(beanName);
+        }
+        return doCreateBean(beanDefinition);
+    }
+
+    private Object doCreateBean(BeanDefinition beanDefinition) {
+        Constructor<?> constructor = beanDefinition.getConstructor();
+        Object bean = null;
+        try {
+            bean = constructor.newInstance();
+            //先不进行注入
+            loadingIoc.put(beanDefinition.getBeanName(),bean);
+            // 将 autowired 的目标 都赋值给 field
+            List<Field> autowiredList = beanDefinition.getAutowiredList();
+            for(Field fd : autowiredList) {
+                fd.setAccessible(true);
+                fd.set(bean,getBean(fd.getType()));
+            }
+            //注入完成，将半成品移除
+            loadingIoc.remove(beanDefinition.getBeanName());
+            ioc.put(beanDefinition.getBeanName(),bean);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        return bean;
     }
 
     public Object getBean(String beanName) {
+        if(beanName == null) return null;
+        if(ioc.containsKey(beanName)) {
+            return this.ioc.get(beanName);
+        }
+        // 这里很关键，当 A 需要 B 注入的时候， 保证先把 B 注册为Bean
+        if(beanDefinitionMap.containsKey(beanName)) {
+            return createBean(beanDefinitionMap.get(beanName));
+        }
         return null;
     }
 
+    // 根据类型获取 找到的首个
     public <T> T getBean(Class<?> beanType) {
-        return null;
+        String beanName = beanDefinitionMap.values().stream()
+                .filter(bd-> beanType.isAssignableFrom(bd.getBeanType()))
+                .findFirst()
+                .map(BeanDefinition::getBeanName)
+                .orElse(null);
+        return (T) getBean(beanName);
     }
 
     public <T> List<T> getBeans(Class<?> beanType) {
-        return null;
+        return beanDefinitionMap.values().stream()
+                .filter(bd-> beanType.isAssignableFrom(bd.getBeanType()))
+                .map(BeanDefinition::getBeanName)
+                .map(this::getBean)
+                .map(bean -> (T) bean)
+                .toList();
     }
 }
